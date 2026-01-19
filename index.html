@@ -197,6 +197,19 @@
                 }
             }
 
+            async disconnectWallet() {
+                try {
+                    if (window.solana) {
+                        await window.solana.disconnect();
+                    }
+                    this.wallet = null;
+                    this.showStatus('success', 'Wallet disconnected');
+                    this.render();
+                } catch (err) {
+                    this.showStatus('error', `Disconnect failed: ${err.message}`);
+                }
+            }
+
             addRecipient() {
                 this.recipients.push({ address: '', percentage: '' });
                 this.render();
@@ -504,6 +517,11 @@
                     connectBtn.onclick = () => this.connectWallet();
                 }
 
+                const disconnectBtn = document.getElementById('disconnect-btn');
+                if (disconnectBtn) {
+                    disconnectBtn.onclick = () => this.disconnectWallet();
+                }
+
                 const addBtn = document.getElementById('add-recipient-btn');
                 if (addBtn) {
                     addBtn.onclick = () => this.addRecipient();
@@ -632,8 +650,9 @@
                         ${!this.wallet ? `
                             <button id="connect-btn">Connect Phantom Wallet</button>
                         ` : `
-                            <div class="wallet-info">
-                                Connected: ${this.wallet.toString()}
+                            <div class="wallet-info" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Connected: ${this.wallet.toString()}</span>
+                                <button id="disconnect-btn" style="background: #ff4444; padding: 8px 16px; margin: 0;">Disconnect</button>
                             </div>
                         `}
 
