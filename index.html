@@ -162,25 +162,22 @@
                 this.network = network;
             }
 
-            async autoDetectDecimals() {
-                if (!this.tokenMint) {
-                    this.showStatus('error', 'Please enter token mint address first');
-                    return;
-                }
-
+            async fetchTokenDecimals(mintAddress) {
                 try {
-                    this.showStatus('info', 'Detecting token decimals...');
-                    const mintPubkey = new PublicKey(this.tokenMint);
+                    const mintPubkey = new PublicKey(mintAddress);
                     
-                    // Import getMint from spl-token
-                    const { getMint } = await import('https://esm.sh/@solana/spl-token@0.3.9');
-                    const mintInfo = await getMint(this.connection, mintPubkey);
-                    
-                    this.tokenDecimals = mintInfo.decimals.toString();
-                    this.showStatus('success', `Token decimals detected: ${this.tokenDecimals}`);
-                    this.render();
+                    // Fetch the mint account info
+                    const accountInfo = await this.connection.getAccountInfo(mintPubkey);
+                    if (!accountInfo) {
+                        throw new Error('Token mint not found');
+                    }
+
+                    // Parse the mint data - decimals is at byte 44
+                    const decimals = accountInfo.data[44];
+                    return decimals;
                 } catch (err) {
-                    this.showStatus('error', `Failed to detect decimals: ${err.message}. Please enter manually.`);
+                    console.error('Failed to fetch decimals:', err);
+                    return 9; // Default fallback to 9
                 }
             }
 
@@ -314,10 +311,6 @@
             validateInputs() {
                 if (!this.tokenMint) {
                     throw new Error('Token mint address is required');
-                }
-
-                if (!this.tokenDecimals || this.tokenDecimals === '') {
-                    throw new Error('Token decimals are required. Click "Auto-Detect" or enter manually.');
                 }
                 
                 if (this.distributionMode === 'percentage') {
@@ -543,11 +536,6 @@
                     loadBtn.onclick = () => this.loadDistribution();
                 }
 
-                const detectDecimalsBtn = document.getElementById('detect-decimals-btn');
-                if (detectDecimalsBtn) {
-                    detectDecimalsBtn.onclick = () => this.autoDetectDecimals();
-                }
-
                 // Remove buttons
                 document.querySelectorAll('.remove-btn').forEach(btn => {
                     btn.onclick = () => {
@@ -572,12 +560,22 @@
 
                 const tokenMint = document.getElementById('token-mint');
                 if (tokenMint) {
-                    tokenMint.oninput = (e) => this.tokenMint = e.target.value;
-                }
-
-                const tokenDecimals = document.getElementById('token-decimals');
-                if (tokenDecimals) {
-                    tokenDecimals.oninput = (e) => this.tokenDecimals = e.target.value;
+                    tokenMint.oninput = async (e) => {
+                        this.tokenMint = e.target.value;
+                        
+                        // Auto-detect decimals when a valid address is entered
+                        if (this.tokenMint.length === 44 || this.tokenMint.length === 43) {
+                            try {
+                                new PublicKey(this.tokenMint); // Validate it's a valid address
+                                const decimals = await this.fetchTokenDecimals(this.tokenMint);
+                                this.tokenDecimals = decimals.toString();
+                                console.log(`Auto-detected decimals: ${this.tokenDecimals}`);
+                            } catch (err) {
+                                // Invalid address or fetch failed, ignore
+                                this.tokenDecimals = '9'; // Default
+                            }
+                        }
+                    };
                 }
 
                 const totalAmount = document.getElementById('total-amount');
@@ -647,23 +645,6 @@
                                 placeholder="e.g., EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
                                 value="${this.tokenMint}"
                             />
-                        </div>
-
-                        <div class="input-group">
-                            <label>Token Decimals:</label>
-                            <div style="display: flex; gap: 10px;">
-                                <input
-                                    type="number"
-                                    id="token-decimals"
-                                    min="0"
-                                    max="18"
-                                    placeholder="Enter token mint address and click detect"
-                                    value="${this.tokenDecimals}"
-                                    style="flex: 1;"
-                                />
-                                <button id="detect-decimals-btn" style="background: #f59e0b; width: 150px; margin: 0;">🔍 Auto-Detect</button>
-                            </div>
-                            <small style="color: #666; font-size: 12px;">Common: 6 (USDC, pump.fun), 9 (SOL, most tokens), 8 (WBTC)</small>
                         </div>
 
                         <div class="input-group">
