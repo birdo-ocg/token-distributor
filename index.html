@@ -139,6 +139,7 @@
                 this.connection = null;
                 this.network = 'devnet';
                 this.tokenMint = '';
+                this.tokenDecimals = ''; // Will be auto-detected
                 this.totalAmount = '';
                 this.recipients = [{ address: '', percentage: '' }];
                 this.processing = false;
@@ -159,6 +160,28 @@
                     : 'https://api.devnet.solana.com';
                 this.connection = new Connection(endpoint, 'confirmed');
                 this.network = network;
+            }
+
+            async autoDetectDecimals() {
+                if (!this.tokenMint) {
+                    this.showStatus('error', 'Please enter token mint address first');
+                    return;
+                }
+
+                try {
+                    this.showStatus('info', 'Detecting token decimals...');
+                    const mintPubkey = new PublicKey(this.tokenMint);
+                    
+                    // Import getMint from spl-token
+                    const { getMint } = await import('https://esm.sh/@solana/spl-token@0.3.9');
+                    const mintInfo = await getMint(this.connection, mintPubkey);
+                    
+                    this.tokenDecimals = mintInfo.decimals.toString();
+                    this.showStatus('success', `Token decimals detected: ${this.tokenDecimals}`);
+                    this.render();
+                } catch (err) {
+                    this.showStatus('error', `Failed to detect decimals: ${err.message}. Please enter manually.`);
+                }
             }
 
             async connectWallet() {
@@ -225,6 +248,7 @@
                     network: this.network,
                     distributionMode: this.distributionMode,
                     tokenMint: this.tokenMint,
+                    tokenDecimals: this.tokenDecimals,
                     totalAmount: this.totalAmount,
                     recipients: this.recipients,
                     savedAt: new Date().toISOString()
@@ -268,6 +292,7 @@
                             this.network = config.network || 'mainnet';
                             this.distributionMode = config.distributionMode || 'percentage';
                             this.tokenMint = config.tokenMint || '';
+                            this.tokenDecimals = config.tokenDecimals || '6';
                             this.totalAmount = config.totalAmount || '';
                             this.recipients = config.recipients;
 
@@ -289,6 +314,10 @@
             validateInputs() {
                 if (!this.tokenMint) {
                     throw new Error('Token mint address is required');
+                }
+
+                if (!this.tokenDecimals || this.tokenDecimals === '') {
+                    throw new Error('Token decimals are required. Click "Auto-Detect" or enter manually.');
                 }
                 
                 if (this.distributionMode === 'percentage') {
@@ -364,13 +393,15 @@
                         const recipientPubkey = new PublicKey(recipient.address);
                         const value = parseFloat(recipient.percentage);
                         
+                        const decimals = parseInt(this.tokenDecimals);
+                        
                         let amount;
                         if (this.distributionMode === 'percentage') {
                             const total = parseFloat(this.totalAmount);
-                            amount = Math.floor((total * value / 100) * Math.pow(10, 9));
+                            amount = Math.floor((total * value / 100) * Math.pow(10, decimals));
                         } else {
                             // Direct amount
-                            amount = Math.floor(value * Math.pow(10, 9));
+                            amount = Math.floor(value * Math.pow(10, decimals));
                         }
                         
                         const recipientTokenAccount = await getAssociatedTokenAddress(
@@ -512,6 +543,11 @@
                     loadBtn.onclick = () => this.loadDistribution();
                 }
 
+                const detectDecimalsBtn = document.getElementById('detect-decimals-btn');
+                if (detectDecimalsBtn) {
+                    detectDecimalsBtn.onclick = () => this.autoDetectDecimals();
+                }
+
                 // Remove buttons
                 document.querySelectorAll('.remove-btn').forEach(btn => {
                     btn.onclick = () => {
@@ -537,6 +573,11 @@
                 const tokenMint = document.getElementById('token-mint');
                 if (tokenMint) {
                     tokenMint.oninput = (e) => this.tokenMint = e.target.value;
+                }
+
+                const tokenDecimals = document.getElementById('token-decimals');
+                if (tokenDecimals) {
+                    tokenDecimals.oninput = (e) => this.tokenDecimals = e.target.value;
                 }
 
                 const totalAmount = document.getElementById('total-amount');
@@ -606,6 +647,23 @@
                                 placeholder="e.g., EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
                                 value="${this.tokenMint}"
                             />
+                        </div>
+
+                        <div class="input-group">
+                            <label>Token Decimals:</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input
+                                    type="number"
+                                    id="token-decimals"
+                                    min="0"
+                                    max="18"
+                                    placeholder="Enter token mint address and click detect"
+                                    value="${this.tokenDecimals}"
+                                    style="flex: 1;"
+                                />
+                                <button id="detect-decimals-btn" style="background: #f59e0b; width: 150px; margin: 0;">🔍 Auto-Detect</button>
+                            </div>
+                            <small style="color: #666; font-size: 12px;">Common: 6 (USDC, pump.fun), 9 (SOL, most tokens), 8 (WBTC)</small>
                         </div>
 
                         <div class="input-group">
