@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Token Distributor</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-top: 0;
+            color: #333;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .recipient-row {
+            display: grid;
+            grid-template-columns: 1fr 120px 40px;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: start;
+        }
+        button {
+            background: #14F195;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #00D084;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .small-btn {
+            padding: 8px 12px;
+            font-size: 12px;
+            background: #ff4444;
+            color: white;
+        }
+        .small-btn:hover {
+            background: #cc0000;
+        }
+        .add-btn {
+            background: #4444ff;
+            color: white;
+        }
+        .add-btn:hover {
+            background: #3333cc;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .status.error {
+            background: #ffe6e6;
+            color: #cc0000;
+        }
+        .status.success {
+            background: #e6ffe6;
+            color: #008800;
+        }
+        .status.info {
+            background: #e6f3ff;
+            color: #0066cc;
+        }
+        .wallet-info {
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .network-select {
+            margin-bottom: 20px;
+        }
+        select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="container">
+            <h1>Solana Token Distributor</h1>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { Connection, PublicKey, Transaction } from 'https://esm.sh/@solana/web3.js@1.87.6';
+        import { 
+            TOKEN_PROGRAM_ID, 
+            getAssociatedTokenAddress, 
+            createAssociatedTokenAccountInstruction, 
+            createTransferInstruction 
+        } from 'https://esm.sh/@solana/spl-token@0.3.9';
+
+        class TokenDistributor {
+            constructor() {
+                this.wallet = null;
+                this.connection = null;
+                this.network = 'devnet';
+                this.tokenMint = '';
+                this.totalAmount = '';
+                this.recipients = [{ address: '', percentage: '' }];
+                this.processing = false;
+                this.distributionMode = 'percentage'; // 'percentage' or 'amount'
+                
+                this.init();
+            }
+
+            init() {
+                this.setConnection('devnet');
+                this.render();
+                this.attachEventListeners();
+            }
+
+            setConnection(network) {
+                const endpoint = network === 'mainnet' 
+                    ? 'https://mainnet.helius-rpc.com/?api-key=cab14609-5788-4a60-bd78-e17552a0520a'
+                    : 'https://api.devnet.solana.com';
+                this.connection = new Connection(endpoint, 'confirmed');
+                this.network = network;
+            }
+
+            async connectWallet() {
+                try {
+                    if (!window.solana) {
+                        this.showStatus('error', 'Phantom wallet not found! Please install it.');
+                        return;
+                    }
+                    
+                    const response = await window.solana.connect();
+                    this.wallet = response.publicKey;
+                    this.showStatus('success', `Connected: ${response.publicKey.toString()}`);
+                    this.render();
+                } catch (err) {
+                    this.showStatus('error', `Connection failed: ${err.message}`);
+                }
+            }
+
+            addRecipient() {
+                this.recipients.push({ address: '', percentage: '' });
+                this.render();
+            }
+
+            removeRecipient(index) {
+                this.recipients = this.recipients.filter((_, i) => i !== index);
+                this.render();
+            }
+
+            processPastedData() {
+                const pasteText = document.getElementById('paste-input').value.trim();
+                if (!pasteText) {
+                    this.showStatus('error', 'Please paste data first');
+                    return;
+                }
+
+                const lines = pasteText.split('\n').filter(line => line.trim());
+                const newRecipients = [];
+
+                for (const line of lines) {
+                    // Split by tab (Excel default) or comma
+                    const parts = line.includes('\t') ? line.split('\t') : line.split(',');
+                    
+                    if (parts.length >= 1) {
+                        newRecipients.push({
+                            address: parts[0].trim(),
+                            percentage: parts[1] ? parts[1].trim() : ''
+                        });
+                    }
+                }
+
+                if (newRecipients.length > 0) {
+                    this.recipients = newRecipients;
+                    document.getElementById('paste-area').style.display = 'none';
+                    document.getElementById('paste-input').value = '';
+                    this.showStatus('success', `Imported ${newRecipients.length} recipients`);
+                    this.render();
+                } else {
+                    this.showStatus('error', 'No valid data found. Paste one address per line, optionally with percentage');
+                }
+            }
+
+            saveDistribution() {
+                const config = {
+                    network: this.network,
+                    distributionMode: this.distributionMode,
+                    tokenMint: this.tokenMint,
+                    totalAmount: this.totalAmount,
+                    recipients: this.recipients,
+                    savedAt: new Date().toISOString()
+                };
+
+                const dataStr = JSON.stringify(config, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `token-distribution-${Date.now()}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                this.showStatus('success', 'Distribution configuration saved!');
+            }
+
+            loadDistribution() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+                
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const config = JSON.parse(event.target.result);
+                            
+                            // Validate the config has required fields
+                            if (!config.recipients || !Array.isArray(config.recipients)) {
+                                throw new Error('Invalid configuration file');
+                            }
+
+                            // Load the configuration
+                            this.network = config.network || 'mainnet';
+                            this.distributionMode = config.distributionMode || 'percentage';
+                            this.tokenMint = config.tokenMint || '';
+                            this.totalAmount = config.totalAmount || '';
+                            this.recipients = config.recipients;
+
+                            // Update connection with new network
+                            this.setConnection(this.network);
+
+                            this.showStatus('success', `Loaded distribution with ${this.recipients.length} recipients`);
+                            this.render();
+                        } catch (err) {
+                            this.showStatus('error', `Failed to load configuration: ${err.message}`);
+                        }
+                    };
+                    reader.readAsText(file);
+                };
+
+                input.click();
+            }
+
+            validateInputs() {
+                if (!this.tokenMint) {
+                    throw new Error('Token mint address is required');
+                }
+                
+                if (this.distributionMode === 'percentage') {
+                    if (!this.totalAmount || parseFloat(this.totalAmount) <= 0) {
+                        throw new Error('Total amount must be greater than 0');
+                    }
+                    
+                    const totalPercentage = this.recipients.reduce((sum, r) => {
+                        const pct = parseFloat(r.percentage) || 0;
+                        return sum + pct;
+                    }, 0);
+
+                    if (Math.abs(totalPercentage - 100) > 0.01) {
+                        throw new Error(`Percentages must add up to 100% (current total: ${totalPercentage.toFixed(2)}%)`);
+                    }
+                } else {
+                    // Amount mode - total is now required
+                    if (!this.totalAmount || parseFloat(this.totalAmount) <= 0) {
+                        throw new Error('Total amount is required and must be greater than 0');
+                    }
+                    
+                    const totalSent = this.recipients.reduce((sum, r) => {
+                        const amt = parseFloat(r.percentage) || 0; // Still using 'percentage' field but as amount
+                        return sum + amt;
+                    }, 0);
+                    
+                    const expected = parseFloat(this.totalAmount);
+                    if (Math.abs(totalSent - expected) > 0.000001) {
+                        throw new Error(`Individual amounts must add up to total amount (expected: ${expected}, actual: ${totalSent.toFixed(9)})`);
+                    }
+                }
+                
+                for (const recipient of this.recipients) {
+                    if (!recipient.address) {
+                        throw new Error('All recipient addresses must be filled');
+                    }
+                    try {
+                        new PublicKey(recipient.address);
+                    } catch {
+                        throw new Error(`Invalid address: ${recipient.address}`);
+                    }
+                }
+            }
+
+            async distribute() {
+                if (!this.wallet) {
+                    this.showStatus('error', 'Please connect your wallet first');
+                    return;
+                }
+
+                if (this.processing) {
+                    return; // Already processing, ignore additional clicks
+                }
+
+                this.processing = true;
+                this.render();
+                this.showStatus('info', 'Processing distribution...');
+
+                try {
+                    this.validateInputs();
+
+                    const mintPubkey = new PublicKey(this.tokenMint);
+                    const total = parseFloat(this.totalAmount);
+                    
+                    const senderTokenAccount = await getAssociatedTokenAddress(
+                        mintPubkey,
+                        this.wallet
+                    );
+
+                    const transaction = new Transaction();
+                    
+                    for (const recipient of this.recipients) {
+                        const recipientPubkey = new PublicKey(recipient.address);
+                        const value = parseFloat(recipient.percentage);
+                        
+                        let amount;
+                        if (this.distributionMode === 'percentage') {
+                            const total = parseFloat(this.totalAmount);
+                            amount = Math.floor((total * value / 100) * Math.pow(10, 9));
+                        } else {
+                            // Direct amount
+                            amount = Math.floor(value * Math.pow(10, 9));
+                        }
+                        
+                        const recipientTokenAccount = await getAssociatedTokenAddress(
+                            mintPubkey,
+                            recipientPubkey
+                        );
+
+                        const accountInfo = await this.connection.getAccountInfo(recipientTokenAccount);
+                        
+                        if (!accountInfo) {
+                            transaction.add(
+                                createAssociatedTokenAccountInstruction(
+                                    this.wallet,
+                                    recipientTokenAccount,
+                                    recipientPubkey,
+                                    mintPubkey
+                                )
+                            );
+                        }
+
+                        transaction.add(
+                            createTransferInstruction(
+                                senderTokenAccount,
+                                recipientTokenAccount,
+                                this.wallet,
+                                amount
+                            )
+                        );
+                    }
+
+                    const { blockhash } = await this.connection.getLatestBlockhash();
+                    transaction.recentBlockhash = blockhash;
+                    transaction.feePayer = this.wallet;
+
+                    const signed = await window.solana.signTransaction(transaction);
+                    const signature = await this.connection.sendRawTransaction(signed.serialize());
+                    
+                    // Wait for confirmation using polling instead of websocket
+                    this.showStatus('info', 'Waiting for confirmation...');
+                    let confirmed = false;
+                    for (let i = 0; i < 30; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        const status = await this.connection.getSignatureStatus(signature);
+                        if (status?.value?.confirmationStatus === 'confirmed' || status?.value?.confirmationStatus === 'finalized') {
+                            confirmed = true;
+                            break;
+                        }
+                    }
+
+                    if (confirmed) {
+                        this.showStatus('success', `Distribution successful! Signature: ${signature}`);
+                    } else {
+                        this.showStatus('info', `Transaction sent but confirmation timed out. Signature: ${signature}`);
+                    }
+                } catch (err) {
+                    this.showStatus('error', err.message);
+                } finally {
+                    this.processing = false;
+                    this.render();
+                }
+            }
+
+            showStatus(type, message) {
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.className = `status ${type}`;
+                    statusDiv.textContent = message;
+                    statusDiv.style.display = 'block';
+                }
+            }
+
+            getCurrentTotal() {
+                const total = this.recipients.reduce((sum, r) => {
+                    const val = parseFloat(r.percentage) || 0;
+                    return sum + val;
+                }, 0);
+                return total;
+            }
+
+            getValidationMessage() {
+                const currentTotal = this.getCurrentTotal();
+                
+                if (this.distributionMode === 'percentage') {
+                    if (Math.abs(currentTotal - 100) < 0.01) {
+                        return `<span style="color: #008800;">✓ Total: ${currentTotal.toFixed(2)}%</span>`;
+                    } else {
+                        return `<span style="color: #cc0000;">⚠ Total: ${currentTotal.toFixed(2)}% (must equal 100%)</span>`;
+                    }
+                } else {
+                    const expected = parseFloat(this.totalAmount) || 0;
+                    if (expected > 0) {
+                        if (Math.abs(currentTotal - expected) < 0.000001) {
+                            return `<span style="color: #008800;">✓ Total: ${currentTotal.toFixed(9)} tokens</span>`;
+                        } else {
+                            return `<span style="color: #cc0000;">⚠ Total: ${currentTotal.toFixed(9)} (must equal ${expected})</span>`;
+                        }
+                    } else {
+                        return `<span style="color: #666;">Total: ${currentTotal.toFixed(9)} tokens</span>`;
+                    }
+                }
+            }
+
+            attachEventListeners() {
+                // Attach listeners directly to buttons using onclick
+                const connectBtn = document.getElementById('connect-btn');
+                if (connectBtn) {
+                    connectBtn.onclick = () => this.connectWallet();
+                }
+
+                const addBtn = document.getElementById('add-recipient-btn');
+                if (addBtn) {
+                    addBtn.onclick = () => this.addRecipient();
+                }
+
+                const distributeBtn = document.getElementById('distribute-btn');
+                if (distributeBtn) {
+                    distributeBtn.onclick = () => this.distribute();
+                }
+
+                const importBtn = document.getElementById('import-btn');
+                if (importBtn) {
+                    importBtn.onclick = () => {
+                        document.getElementById('paste-area').style.display = 'block';
+                    };
+                }
+
+                const processPasteBtn = document.getElementById('process-paste-btn');
+                if (processPasteBtn) {
+                    processPasteBtn.onclick = () => this.processPastedData();
+                }
+
+                const saveBtn = document.getElementById('save-btn');
+                if (saveBtn) {
+                    saveBtn.onclick = () => this.saveDistribution();
+                }
+
+                const loadBtn = document.getElementById('load-btn');
+                if (loadBtn) {
+                    loadBtn.onclick = () => this.loadDistribution();
+                }
+
+                // Remove buttons
+                document.querySelectorAll('.remove-btn').forEach(btn => {
+                    btn.onclick = () => {
+                        const index = parseInt(btn.dataset.index);
+                        this.removeRecipient(index);
+                    };
+                });
+
+                // Input changes
+                const networkSelect = document.getElementById('network-select');
+                if (networkSelect) {
+                    networkSelect.onchange = (e) => this.setConnection(e.target.value);
+                }
+
+                const distributionMode = document.getElementById('distribution-mode');
+                if (distributionMode) {
+                    distributionMode.onchange = (e) => {
+                        this.distributionMode = e.target.value;
+                        this.render();
+                    };
+                }
+
+                const tokenMint = document.getElementById('token-mint');
+                if (tokenMint) {
+                    tokenMint.oninput = (e) => this.tokenMint = e.target.value;
+                }
+
+                const totalAmount = document.getElementById('total-amount');
+                if (totalAmount) {
+                    totalAmount.oninput = (e) => this.totalAmount = e.target.value;
+                }
+
+                document.querySelectorAll('.recipient-address').forEach(input => {
+                    input.oninput = (e) => {
+                        const index = parseInt(e.target.dataset.index);
+                        this.recipients[index].address = e.target.value;
+                    };
+                });
+
+                document.querySelectorAll('.recipient-percentage').forEach(input => {
+                    input.oninput = (e) => {
+                        const index = parseInt(e.target.dataset.index);
+                        this.recipients[index].percentage = e.target.value;
+                        // Update validation display
+                        const validationDiv = document.getElementById('validation-message');
+                        if (validationDiv) {
+                            validationDiv.innerHTML = this.getValidationMessage();
+                        }
+                    };
+                });
+            }
+
+            render() {
+                const html = `
+                    <div class="container">
+                        <h1>Solana Token Distributor</h1>
+
+                        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+                            <button id="save-btn" style="background: #9333ea; flex: 1;">💾 Save Distribution</button>
+                            <button id="load-btn" style="background: #0ea5e9; flex: 1;">📂 Load Distribution</button>
+                        </div>
+
+                        <div class="network-select">
+                            <label>Network:</label>
+                            <select id="network-select">
+                                <option value="devnet" ${this.network === 'devnet' ? 'selected' : ''}>Devnet</option>
+                                <option value="mainnet" ${this.network === 'mainnet' ? 'selected' : ''}>Mainnet Beta</option>
+                            </select>
+                        </div>
+
+                        <div class="network-select">
+                            <label>Distribution Mode:</label>
+                            <select id="distribution-mode">
+                                <option value="percentage" ${this.distributionMode === 'percentage' ? 'selected' : ''}>Percentage</option>
+                                <option value="amount" ${this.distributionMode === 'amount' ? 'selected' : ''}>Exact Amount</option>
+                            </select>
+                        </div>
+
+                        ${!this.wallet ? `
+                            <button id="connect-btn">Connect Phantom Wallet</button>
+                        ` : `
+                            <div class="wallet-info">
+                                Connected: ${this.wallet.toString()}
+                            </div>
+                        `}
+
+                        <div class="input-group">
+                            <label>Token Mint Address:</label>
+                            <input
+                                type="text"
+                                id="token-mint"
+                                placeholder="e.g., EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                                value="${this.tokenMint}"
+                            />
+                        </div>
+
+                        <div class="input-group">
+                            <label>Total Amount ${this.distributionMode === 'amount' ? '(Required for verification)' : 'to Distribute'}:</label>
+                            <input
+                                type="number"
+                                id="total-amount"
+                                step="0.000000001"
+                                placeholder="e.g., 1000"
+                                value="${this.totalAmount}"
+                            />
+                        </div>
+
+                        <div class="input-group">
+                            <label>Recipients:</label>
+                            <button class="add-btn" id="import-btn" style="margin-bottom: 10px;">Import from Excel</button>
+                            
+                            <div id="paste-area" style="display: none; margin-bottom: 15px; padding: 15px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                                <label>Paste wallet addresses (percentages optional):</label>
+                                <textarea 
+                                    id="paste-input" 
+                                    rows="6" 
+                                    placeholder="Paste wallet addresses here (one per line, optionally with percentage after tab or comma)"
+                                    style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 12px;"
+                                ></textarea>
+                                <button id="process-paste-btn" style="margin-top: 5px;">Process Data</button>
+                            </div>
+                            
+                            ${this.recipients.map((recipient, index) => `
+                                <div class="recipient-row">
+                                    <input
+                                        type="text"
+                                        class="recipient-address"
+                                        data-index="${index}"
+                                        placeholder="Recipient address"
+                                        value="${recipient.address}"
+                                    />
+                                    <input
+                                        type="number"
+                                        class="recipient-percentage"
+                                        data-index="${index}"
+                                        step="0.000000001"
+                                        placeholder="${this.distributionMode === 'percentage' ? '%' : 'Amount'}"
+                                        value="${recipient.percentage}"
+                                    />
+                                    ${this.recipients.length > 1 ? `
+                                        <button class="small-btn remove-btn" data-index="${index}">✕</button>
+                                    ` : ''}
+                                </div>
+                            `).join('')}
+                            <button class="add-btn" id="add-recipient-btn">+ Add Recipient</button>
+                        </div>
+
+                        <div id="validation-message" style="padding: 10px; margin-top: 10px; background: #f0f0f0; border-radius: 4px; font-weight: 500;">
+                            ${this.getValidationMessage()}
+                        </div>
+
+                        <button 
+                            id="distribute-btn"
+                            ${!this.wallet || this.processing ? 'disabled' : ''}
+                        >
+                            ${this.processing ? 'Processing...' : 'Distribute Tokens'}
+                        </button>
+
+                        <div id="status" class="status" style="display: none;"></div>
+                    </div>
+                `;
+
+                document.getElementById('root').innerHTML = html;
+                this.attachEventListeners();
+            }
+        }
+
+        new TokenDistributor();
+    </script>
+</body>
+</html>
